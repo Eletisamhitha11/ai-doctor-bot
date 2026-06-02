@@ -1,13 +1,7 @@
 import Groq from "groq-sdk";
-import { GoogleGenAI } from "@google/genai";
-import { PDFParse } from "pdf-parse";
 
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
-});
-
-const gemini = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
 });
 
 const headers = {
@@ -36,10 +30,6 @@ async function withRetry(fn, attempts = 3) {
 function base64FromDataUrl(dataUrl = "") {
   const commaIndex = dataUrl.indexOf(",");
   return commaIndex >= 0 ? dataUrl.slice(commaIndex + 1) : dataUrl;
-}
-
-function dataUrlToBuffer(dataUrl = "") {
-  return Buffer.from(base64FromDataUrl(dataUrl), "base64");
 }
 
 function symptomPrompt(message) {
@@ -87,7 +77,7 @@ ${note || "No note provided"}
 `.trim();
 }
 
-function reportPrompt(reportText, note) {
+function reportPrompt(note) {
   return `
 Analyze this medical report carefully.
 
@@ -107,58 +97,71 @@ Rules:
 
 User note:
 ${note || "No note provided"}
-
-Extracted report text:
-${reportText || "No report text extracted"}
 `.trim();
 }
 
-async function analyzeImage(fileType, fileDataUrl, note) {
-  const result = await withRetry(() =>
-    gemini.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: [
-        {
-          inlineData: {
-            mimeType: fileType,
-            data: base64FromDataUrl(fileDataUrl),
+async function callGemini({ prompt, fileType, fileDataUrl }) {
+  const parts = [];
+
+  if (fileDataUrl) {
+    parts.push({
+      inline_data: {
+        mime_type: fileType,
+        data: base64FromDataUrl(fileDataUrl),
+      },
+    });
+  }
+
+  parts.push({ text: prompt });
+
+  const response = await fetch(
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": process.env.GEMINI_API_KEY,
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: "user",
+            parts,
           },
-        },
-        {
-          text: imagePrompt(note),
-        },
-      ],
-    })
+        ],
+      }),
+    }
   );
 
-  return result.text || "No response received.";
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data?.error?.message || "Gemini request failed");
+  }
+
+  const text =
+    data?.candidates?.[0]?.content?.parts
+      ?.map((part) => part.text || "")
+      .join("")
+      .trim() || "No response received.";
+
+  return text;
 }
 
-async function analyzePdf(fileDataUrl, note) {
-  const buffer = dataUrlToBuffer(fileDataUrl);
-
-  const parser = new PDFParse({ data: buffer });
-  const parsed = await parser.getText();
-  await parser.destroy?.();
-
-  const reportText = parsed?.text || "";
-
-  const completion = await groq.chat.completions.create({
-    model: "llama-3.3-70b-versatile",
-    messages: [
-      {
-        role: "system",
-        content:
-          "You are a professional AI health assistant. Give educational guidance only. Do not diagnose or prescribe medicines. Be concise, clear, and safe. If report findings look serious, advise seeing a doctor.",
-      },
-      {
-        role: "user",
-        content: reportPrompt(reportText, note),
-      },
-    ],
+async function analyzeImage(fileType, fileDataUrl, note) {
+  return callGemini({
+    prompt: imagePrompt(note),
+    fileType,
+    fileDataUrl,
   });
+}
 
-  return completion.choices[0]?.message?.content || "No response received.";
+async function analyzePdf(fileType, fileDataUrl, note) {
+  return callGemini({
+    prompt: reportPrompt(note),
+    fileType,
+    fileDataUrl,
+  });
 }
 
 export async function handler(event) {
@@ -227,7 +230,7 @@ export async function handler(event) {
 
     // PDF upload
     if (fileType === "application/pdf") {
-      const reply = await analyzePdf(fileDataUrl, message);
+      const reply = await analyzePdf(fileType, fileDataUrl, message);
       return {
         statusCode: 200,
         headers,
