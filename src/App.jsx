@@ -202,10 +202,10 @@ function App() {
         formData.append("file", currentFile);
       }
 
-      const response = await fetch("http://localhost:5000/chat", {
-        method: "POST",
-        body: formData,
-      });
+      const response = await fetch("/.netlify/functions/chat", {
+  method: "POST",
+  body: formData,
+});
 
       const data = await response.json();
       const botReply = data.reply || "No response received.";
