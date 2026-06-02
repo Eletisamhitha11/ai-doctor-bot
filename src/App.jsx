@@ -21,7 +21,13 @@ function App() {
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const recognitionRef = useRef(null);
-
+  const readFileAsDataUrl = (selectedFile) =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(selectedFile);
+  });
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
@@ -175,54 +181,60 @@ function App() {
     window.speechSynthesis.speak(utterance);
   };
 
-  const handleSend = async () => {
-    if (loading) return;
-    if (!input.trim() && !file) return;
+ const handleSend = async () => {
+  if (loading) return;
+  if (!input.trim() && !file) return;
 
-    const userText = input.trim()
-      ? input.trim()
-      : file
-      ? `Uploaded file: ${file.name}`
-      : "";
+  const userText = input.trim()
+    ? input.trim()
+    : file
+    ? `Uploaded file: ${file.name}`
+    : "";
 
-    setMessages((prev) => [...prev, { role: "user", text: userText }]);
+  setMessages((prev) => [...prev, { role: "user", text: userText }]);
 
-    const currentInput = input;
-    const currentFile = file;
+  const currentInput = input;
+  const currentFile = file;
 
-    setInput("");
-    setFile(null);
-    setLoading(true);
+  setInput("");
+  setFile(null);
+  setLoading(true);
 
-    try {
-      const formData = new FormData();
-      formData.append("message", currentInput);
+  try {
+    const payload = {
+      message: currentInput,
+    };
 
-      if (currentFile) {
-        formData.append("file", currentFile);
-      }
-
-      const response = await fetch("/.netlify/functions/chat", {
-  method: "POST",
-  body: formData,
-});
-
-      const data = await response.json();
-      const botReply = data.reply || "No response received.";
-
-      setMessages((prev) => [...prev, { role: "bot", text: botReply }]);
-      speakText(botReply);
-    } catch (error) {
-      console.error(error);
-      setMessages((prev) => [
-        ...prev,
-        { role: "bot", text: "Server error. Please try again." },
-      ]);
-    } finally {
-      setLoading(false);
+    if (currentFile) {
+      const fileDataUrl = await readFileAsDataUrl(currentFile);
+      payload.fileName = currentFile.name;
+      payload.fileType = currentFile.type;
+      payload.fileDataUrl = fileDataUrl;
     }
-  };
 
+    const response = await fetch("/.netlify/functions/chat", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json();
+    const botReply = data.reply || "No response received.";
+
+    setMessages((prev) => [...prev, { role: "bot", text: botReply }]);
+    speakText(botReply);
+  } catch (error) {
+    console.error(error);
+    setMessages((prev) => [
+      ...prev,
+      { role: "bot", text: "Server error. Please try again." },
+    ]);
+  } finally {
+    setLoading(false);
+  }
+};
   const handleKeyDown = (e) => {
     if (e.key === "Enter") handleSend();
   };
