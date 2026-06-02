@@ -18,7 +18,7 @@ function App() {
   const [micSupported, setMicSupported] = useState(false);
   const [speechOutputSupported, setSpeechOutputSupported] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
-
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [chatHistory, setChatHistory] = useState([]);
   const [currentChatId, setCurrentChatId] = useState(Date.now());
 
@@ -53,32 +53,40 @@ function App() {
   }, [voiceEnabled]);
 
   useEffect(() => {
-    try {
-      const savedChats = localStorage.getItem("doctorChats");
-      if (!savedChats) return;
+  if (!isLoggedIn) {
+    localStorage.removeItem("doctorChats");
+    setChatHistory([]);
+    setMessages(DEFAULT_MESSAGES);
+    return;
+  }
 
-      const parsed = JSON.parse(savedChats);
-      if (Array.isArray(parsed)) {
-        setChatHistory(parsed);
+  try {
+    const savedChats = localStorage.getItem("doctorChats");
+    if (!savedChats) return;
 
-        if (parsed.length > 0) {
-          const latest = parsed[parsed.length - 1];
-          setCurrentChatId(latest.id || Date.now());
-          setMessages(
-            Array.isArray(latest.messages) && latest.messages.length > 0
-              ? latest.messages
-              : DEFAULT_MESSAGES
-          );
-        }
+    const parsed = JSON.parse(savedChats);
+    if (Array.isArray(parsed)) {
+      setChatHistory(parsed);
+
+      if (parsed.length > 0) {
+        const latest = parsed[parsed.length - 1];
+        setCurrentChatId(latest.id || Date.now());
+        setMessages(
+          Array.isArray(latest.messages) && latest.messages.length > 0
+            ? latest.messages
+            : DEFAULT_MESSAGES
+        );
       }
-    } catch (error) {
-      console.error("Failed to load chat history:", error);
     }
-  }, []);
+  } catch (error) {
+    console.error("Failed to load chat history:", error);
+  }
+}, [isLoggedIn]);
 
-  useEffect(() => {
-    localStorage.setItem("doctorChats", JSON.stringify(chatHistory));
-  }, [chatHistory]);
+ useEffect(() => {
+  if (!isLoggedIn) return;
+  localStorage.setItem("doctorChats", JSON.stringify(chatHistory));
+}, [chatHistory, isLoggedIn]);
 
   useEffect(() => {
     if (!file) {
@@ -352,19 +360,17 @@ function App() {
         <div className="ambient ambient-two"></div>
         <div className="ambient ambient-three"></div>
 
-        <div className="app-card">
-          <header className="hero">
-            <div className="eyebrow">
+        <div className="chat-column">
+          <header className="chat-topbar">
+            <div>
+              <h1 className="chat-title">AI Doctor Bot</h1>
+              <p className="chat-subtitle">Medical assistant</p>
+            </div>
+
+            <div className="status-pill">
               <span className="pulse-dot"></span>
               AI Health Assistant
             </div>
-
-            <h1>AI Doctor Bot</h1>
-
-            <p>
-              Ask by symptoms or upload a skin image, scan, or medical report.
-              Voice input and voice output are supported.
-            </p>
           </header>
 
           <section className="chat-panel">
