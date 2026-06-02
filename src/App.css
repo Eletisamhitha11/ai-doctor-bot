@@ -17,10 +17,11 @@ body {
   min-height: 100vh;
   position: relative;
   overflow: hidden;
-  padding: 28px;
+  padding: 18px;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  gap: 18px;
+  align-items: stretch;
+  justify-content: flex-start;
   background:
     radial-gradient(circle at top left, rgba(59, 130, 246, 0.25), transparent 30%),
     radial-gradient(circle at top right, rgba(168, 85, 247, 0.22), transparent 28%),
@@ -57,6 +58,88 @@ body {
   background: rgba(14, 165, 233, 0.25);
   bottom: 8%;
   left: 18%;
+}
+
+.sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  background: rgba(10, 15, 28, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 30px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  backdrop-filter: blur(18px);
+  max-height: calc(100vh - 36px);
+  position: relative;
+  z-index: 1;
+}
+
+.sidebar-header h2 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 1.2rem;
+}
+
+.sidebar-header p {
+  margin: 8px 0 0;
+  color: #94a3b8;
+  font-size: 14px;
+}
+
+.new-chat-btn {
+  margin-top: 16px;
+  width: 100%;
+  padding: 12px 14px;
+  border: none;
+  border-radius: 14px;
+  cursor: pointer;
+  background: linear-gradient(135deg, #2563eb, #7c3aed);
+  color: white;
+  font-weight: 700;
+}
+
+.new-chat-btn:hover {
+  transform: translateY(-1px);
+}
+
+.history-list {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+
+.history-item {
+  padding: 12px 14px;
+  border-radius: 14px;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.05);
+  color: #e2e8f0;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  word-break: break-word;
+}
+
+.history-item:hover,
+.history-item.active {
+  background: rgba(59, 130, 246, 0.18);
+  border-color: rgba(59, 130, 246, 0.35);
+}
+
+.history-empty {
+  color: #94a3b8;
+  font-size: 14px;
+  padding: 10px 4px;
+}
+
+.main-area {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
 }
 
 .app-card {
@@ -122,36 +205,6 @@ body {
   color: #cbd5e1;
   font-size: 1.02rem;
   line-height: 1.7;
-}
-
-.mode-switch {
-  display: flex;
-  justify-content: center;
-  gap: 12px;
-  margin-bottom: 20px;
-  flex-wrap: wrap;
-}
-
-.mode-switch button {
-  padding: 12px 22px;
-  border: none;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.08);
-  color: white;
-  cursor: pointer;
-  font-size: 15px;
-  transition: 0.25s ease;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.mode-switch button:hover {
-  background: rgba(255, 255, 255, 0.12);
-  transform: translateY(-1px);
-}
-
-.mode-switch button.active {
-  background: linear-gradient(135deg, #2563eb, #7c3aed);
-  border-color: transparent;
 }
 
 .chat-panel {
@@ -222,6 +275,8 @@ body {
   font-size: 1rem;
   white-space: pre-wrap;
   word-break: break-word;
+  line-height: 1.7;
+  overflow-wrap: break-word;
 }
 
 .typing .typing-dots {
@@ -378,6 +433,33 @@ body {
   background: linear-gradient(135deg, #ef4444, #f97316);
 }
 
+.voice-toggle-btn {
+  width: 52px;
+  height: 52px;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  transition: all 0.3s ease;
+}
+
+.voice-on {
+  background: linear-gradient(135deg, #22c55e, #06b6d4);
+  color: white;
+}
+
+.voice-off {
+  background: rgba(255, 255, 255, 0.08);
+  color: #94a3b8;
+}
+
+.voice-toggle-btn:hover {
+  transform: scale(1.05);
+}
+
 .send-btn {
   width: 52px;
   height: 52px;
@@ -406,6 +488,12 @@ body {
 @media (max-width: 768px) {
   .app-shell {
     padding: 16px;
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+    max-height: none;
   }
 
   .chat-window {
@@ -436,60 +524,9 @@ body {
   }
 
   .icon-btn,
-  .send-btn {
+  .send-btn,
+  .voice-toggle-btn {
     width: 48px;
     height: 48px;
   }
-}
-.voice-switch {
-  margin-top: 15px;
-  padding: 10px 18px;
-
-  border: none;
-  border-radius: 12px;
-
-  background: linear-gradient(
-    135deg,
-    #2563eb,
-    #7c3aed
-  );
-
-  color: white;
-  cursor: pointer;
-  font-weight: 600;
-}
-.voice-toggle-btn {
-  width: 52px;
-  height: 52px;
-
-  border: none;
-  border-radius: 50%;
-
-  cursor: pointer;
-
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-  font-size: 20px;
-
-  transition: all 0.3s ease;
-}
-
-.voice-on {
-  background: linear-gradient(
-    135deg,
-    #22c55e,
-    #06b6d4
-  );
-  color: white;
-}
-
-.voice-off {
-  background: rgba(255,255,255,0.08);
-  color: #94a3b8;
-}
-
-.voice-toggle-btn:hover {
-  transform: scale(1.05);
 }

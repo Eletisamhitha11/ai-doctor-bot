@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import "./App.css";
 
-function App() {
-  const [messages, setMessages] = useState([
-    {
-      role: "bot",
-      text: "👋 Welcome! You can describe your symptoms or upload a medical image/report for analysis.",
-    },
-  ]);
+const DEFAULT_MESSAGES = [
+  {
+    role: "bot",
+    text: "👋 Welcome! You can describe your symptoms or upload a medical image/report for analysis.",
+  },
+];
 
+function App() {
+  const [messages, setMessages] = useState(DEFAULT_MESSAGES);
   const [input, setInput] = useState("");
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
@@ -18,16 +19,21 @@ function App() {
   const [speechOutputSupported, setSpeechOutputSupported] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
 
+  const [chatHistory, setChatHistory] = useState([]);
+  const [currentChatId, setCurrentChatId] = useState(Date.now());
+
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const recognitionRef = useRef(null);
+
   const readFileAsDataUrl = (selectedFile) =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(selectedFile);
-  });
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(selectedFile);
+    });
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
@@ -45,6 +51,34 @@ function App() {
       window.speechSynthesis.cancel();
     }
   }, [voiceEnabled]);
+
+  useEffect(() => {
+    try {
+      const savedChats = localStorage.getItem("doctorChats");
+      if (!savedChats) return;
+
+      const parsed = JSON.parse(savedChats);
+      if (Array.isArray(parsed)) {
+        setChatHistory(parsed);
+
+        if (parsed.length > 0) {
+          const latest = parsed[parsed.length - 1];
+          setCurrentChatId(latest.id || Date.now());
+          setMessages(
+            Array.isArray(latest.messages) && latest.messages.length > 0
+              ? latest.messages
+              : DEFAULT_MESSAGES
+          );
+        }
+      }
+    } catch (error) {
+      console.error("Failed to load chat history:", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("doctorChats", JSON.stringify(chatHistory));
+  }, [chatHistory]);
 
   useEffect(() => {
     if (!file) {
@@ -181,217 +215,293 @@ function App() {
     window.speechSynthesis.speak(utterance);
   };
 
- const handleSend = async () => {
-  if (loading) return;
-  if (!input.trim() && !file) return;
+  const startNewChat = () => {
+    setMessages(DEFAULT_MESSAGES);
+    setInput("");
+    setFile(null);
+    setPreviewUrl(null);
+    setCurrentChatId(Date.now());
+  };
 
-  const userText = input.trim()
-    ? input.trim()
-    : file
-    ? `Uploaded file: ${file.name}`
-    : "";
+  const openChat = (chat) => {
+    setMessages(chat.messages || DEFAULT_MESSAGES);
+    setCurrentChatId(chat.id);
+    setInput("");
+    setFile(null);
+    setPreviewUrl(null);
+  };
 
-  setMessages((prev) => [...prev, { role: "user", text: userText }]);
+  const handleSend = async () => {
+    if (loading) return;
+    if (!input.trim() && !file) return;
 
-  const currentInput = input;
-  const currentFile = file;
+    const userText = input.trim()
+      ? input.trim()
+      : file
+      ? `Uploaded file: ${file.name}`
+      : "";
 
-  setInput("");
-  setFile(null);
-  setLoading(true);
+    const currentInput = input;
+    const currentFile = file;
+    const currentMessages = messages;
 
-  try {
-    const payload = {
-      message: currentInput,
-    };
+    setInput("");
+    setFile(null);
+    setPreviewUrl(null);
+    setLoading(true);
 
-    if (currentFile) {
-      const fileDataUrl = await readFileAsDataUrl(currentFile);
-      payload.fileName = currentFile.name;
-      payload.fileType = currentFile.type;
-      payload.fileDataUrl = fileDataUrl;
+    const optimisticMessages = [
+      ...currentMessages,
+      { role: "user", text: userText },
+    ];
+
+    setMessages(optimisticMessages);
+
+    try {
+      const payload = {
+        message: currentInput,
+      };
+
+      if (currentFile) {
+        const fileDataUrl = await readFileAsDataUrl(currentFile);
+        payload.fileName = currentFile.name;
+        payload.fileType = currentFile.type;
+        payload.fileDataUrl = fileDataUrl;
+      }
+
+      const response = await fetch("/.netlify/functions/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await response.json();
+      const botReply = data.reply || "No response received.";
+
+      const updatedMessages = [
+        ...optimisticMessages,
+        { role: "bot", text: botReply },
+      ];
+
+      setMessages(updatedMessages);
+      speakText(botReply);
+
+      setChatHistory((prev) => [
+        ...prev.filter((chat) => chat.id !== currentChatId),
+        {
+          id: currentChatId,
+          title: userText.substring(0, 30) || "New Chat",
+          messages: updatedMessages,
+        },
+      ]);
+    } catch (error) {
+      console.error(error);
+
+      const updatedMessages = [
+        ...optimisticMessages,
+        { role: "bot", text: "Server error. Please try again." },
+      ];
+
+      setMessages(updatedMessages);
+    } finally {
+      setLoading(false);
     }
+  };
 
-    const response = await fetch("/.netlify/functions/chat", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
-
-    const data = await response.json();
-    const botReply = data.reply || "No response received.";
-
-    setMessages((prev) => [...prev, { role: "bot", text: botReply }]);
-    speakText(botReply);
-  } catch (error) {
-    console.error(error);
-    setMessages((prev) => [
-      ...prev,
-      { role: "bot", text: "Server error. Please try again." },
-    ]);
-  } finally {
-    setLoading(false);
-  }
-};
   const handleKeyDown = (e) => {
     if (e.key === "Enter") handleSend();
   };
 
+  const sortedHistory = [...chatHistory].sort((a, b) => b.id - a.id);
+
   return (
     <div className="app-shell">
-      <div className="ambient ambient-one"></div>
-      <div className="ambient ambient-two"></div>
-      <div className="ambient ambient-three"></div>
+      <aside className="sidebar">
+        <div className="sidebar-header">
+          <h2>🩺 AI Doctor</h2>
+          <p>Chat history</p>
+        </div>
 
-      <div className="app-card">
-        <header className="hero">
-          <div className="eyebrow">
-            <span className="pulse-dot"></span>
-            AI Health Assistant
-          </div>
+        <button className="new-chat-btn" onClick={startNewChat}>
+          ➕ New Chat
+        </button>
 
-          <h1>AI Doctor Bot</h1>
-
-          <p>
-            Ask by symptoms or upload a skin image, scan, or medical report.
-            Voice input and voice output are supported.
-          </p>
-        </header>
-
-        <section className="chat-panel">
-          <div className="chat-window">
-            {messages.map((msg, index) => (
+        <div className="history-list">
+          {sortedHistory.length === 0 ? (
+            <div className="history-empty">No chats yet</div>
+          ) : (
+            sortedHistory.map((chat) => (
               <div
-                key={index}
-                className={`message-row ${
-                  msg.role === "user" ? "user" : "bot"
+                key={chat.id}
+                className={`history-item ${
+                  chat.id === currentChatId ? "active" : ""
                 }`}
+                onClick={() => openChat(chat)}
               >
-                <div className={`message-bubble ${msg.role}`}>
-                  <div className="message-text">{msg.text}</div>
-                </div>
+                {chat.title || "Chat"}
               </div>
-            ))}
+            ))
+          )}
+        </div>
+      </aside>
 
-            {loading && (
-              <div className="message-row bot">
-                <div className="message-bubble bot typing">
-                  <div className="typing-dots">
-                    <span></span>
-                    <span></span>
-                    <span></span>
+      <div className="main-area">
+        <div className="ambient ambient-one"></div>
+        <div className="ambient ambient-two"></div>
+        <div className="ambient ambient-three"></div>
+
+        <div className="app-card">
+          <header className="hero">
+            <div className="eyebrow">
+              <span className="pulse-dot"></span>
+              AI Health Assistant
+            </div>
+
+            <h1>AI Doctor Bot</h1>
+
+            <p>
+              Ask by symptoms or upload a skin image, scan, or medical report.
+              Voice input and voice output are supported.
+            </p>
+          </header>
+
+          <section className="chat-panel">
+            <div className="chat-window">
+              {messages.map((msg, index) => (
+                <div
+                  key={index}
+                  className={`message-row ${
+                    msg.role === "user" ? "user" : "bot"
+                  }`}
+                >
+                  <div className={`message-bubble ${msg.role}`}>
+                    <div className="message-text">{msg.text}</div>
                   </div>
                 </div>
+              ))}
+
+              {loading && (
+                <div className="message-row bot">
+                  <div className="message-bubble bot typing">
+                    <div className="typing-dots">
+                      <span></span>
+                      <span></span>
+                      <span></span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div ref={messagesEndRef} />
+            </div>
+
+            {file && (
+              <div className="attachment-card">
+                {previewUrl ? (
+                  <img
+                    src={previewUrl}
+                    alt="Uploaded preview"
+                    className="attachment-preview"
+                  />
+                ) : (
+                  <div className="attachment-preview pdf-preview">PDF</div>
+                )}
+
+                <div className="attachment-meta">
+                  <div className="attachment-title">{file.name}</div>
+                  <div className="attachment-subtitle">
+                    {(file.size / 1024).toFixed(1)} KB • Ready to analyze
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  className="remove-btn"
+                  onClick={() => setFile(null)}
+                >
+                  Remove
+                </button>
               </div>
             )}
 
-            <div ref={messagesEndRef} />
-          </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,image/*"
+              hidden
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+            />
 
-          {file && (
-            <div className="attachment-card">
-              {previewUrl ? (
-                <img
-                  src={previewUrl}
-                  alt="Uploaded preview"
-                  className="attachment-preview"
-                />
-              ) : (
-                <div className="attachment-preview pdf-preview">PDF</div>
-              )}
+            <div className="composer">
+              <button
+                type="button"
+                className="icon-btn attach-btn"
+                onClick={openFilePicker}
+                aria-label="Upload file"
+                title="Upload file"
+              >
+                +
+              </button>
 
-              <div className="attachment-meta">
-                <div className="attachment-title">{file.name}</div>
-                <div className="attachment-subtitle">
-                  {(file.size / 1024).toFixed(1)} KB • Ready to analyze
-                </div>
-              </div>
+              <input
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Ask anything..."
+                className="composer-input"
+              />
 
               <button
                 type="button"
-                className="remove-btn"
-                onClick={() => setFile(null)}
+                className={`icon-btn mic-btn ${isListening ? "listening" : ""}`}
+                onClick={startVoiceInput}
+                disabled={!micSupported}
+                aria-label="Voice input"
+                title={
+                  micSupported ? "Voice input" : "Voice input not supported"
+                }
               >
-                Remove
+                {isListening ? "●" : "🎤"}
+              </button>
+
+              <button
+                type="button"
+                className={`icon-btn voice-toggle-btn ${
+                  voiceEnabled ? "voice-on" : "voice-off"
+                }`}
+                onClick={() => {
+                  setVoiceEnabled((prev) => {
+                    const next = !prev;
+
+                    if (!next && window.speechSynthesis) {
+                      window.speechSynthesis.cancel();
+                    }
+
+                    return next;
+                  });
+                }}
+                title={
+                  voiceEnabled ? "Disable Voice Output" : "Enable Voice Output"
+                }
+              >
+                {voiceEnabled ? "🔊" : "🔇"}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSend}
+                className="send-btn"
+                disabled={loading}
+                title="Send"
+              >
+                {loading ? "..." : "➤"}
               </button>
             </div>
-          )}
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".pdf,image/*"
-            hidden
-            onChange={(e) => setFile(e.target.files?.[0] || null)}
-          />
-
-          <div className="composer">
-            <button
-              type="button"
-              className="icon-btn attach-btn"
-              onClick={openFilePicker}
-              aria-label="Upload file"
-              title="Upload file"
-            >
-              +
-            </button>
-
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Ask anything..."
-              className="composer-input"
-            />
-
-            <button
-              type="button"
-              className={`icon-btn mic-btn ${isListening ? "listening" : ""}`}
-              onClick={startVoiceInput}
-              disabled={!micSupported}
-              aria-label="Voice input"
-              title={micSupported ? "Voice input" : "Voice input not supported"}
-            >
-              {isListening ? "●" : "🎤"}
-            </button>
-
-            <button
-              type="button"
-              className={`icon-btn voice-toggle-btn ${
-                voiceEnabled ? "voice-on" : "voice-off"
-              }`}
-              onClick={() => {
-                setVoiceEnabled((prev) => {
-                  const next = !prev;
-
-                  if (!next && window.speechSynthesis) {
-                    window.speechSynthesis.cancel();
-                  }
-
-                  return next;
-                });
-              }}
-              title={
-                voiceEnabled ? "Disable Voice Output" : "Enable Voice Output"
-              }
-            >
-              {voiceEnabled ? "🔊" : "🔇"}
-            </button>
-
-            <button
-              type="button"
-              onClick={handleSend}
-              className="send-btn"
-              disabled={loading}
-              title="Send"
-            >
-              {loading ? "..." : "➤"}
-            </button>
-          </div>
-        </section>
+          </section>
+        </div>
       </div>
     </div>
   );

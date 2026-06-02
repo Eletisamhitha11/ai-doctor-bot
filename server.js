@@ -47,28 +47,32 @@ async function withRetry(fn, attempts = 3) {
   throw lastError;
 }
 
-function symptomPrompt(message) {
-  return `
-You are a professional AI health assistant.
+const prompt = `
+You are an AI medical assistant.
 
-Give your response in exactly these sections:
+Analyze the uploaded medical report.
 
-Analysis:
-Conclusion:
-Precautions:
-Medicinal tips:
+Return your answer in exactly this format:
 
-Rules:
-- Do not diagnose.
-- Do not prescribe medicines.
-- Keep it clear, helpful, and concise.
-- If symptoms sound serious, tell the user to see a doctor.
+🩺 Analysis:
+(Simple explanation)
 
-User symptoms:
-${message || "No symptoms provided."}
-`.trim();
-}
+📌 Conclusion:
+(Short conclusion)
 
+✅ Precautions:
+- Point 1
+- Point 2
+- Point 3
+
+⚠️ Recommendation:
+(When to see a doctor)
+
+Keep the answer under 200 words.
+Do not diagnose.
+Do not prescribe medicines.
+Use simple language.
+`;
 function imagePrompt(note) {
   return `
 Analyze this medical or skin image carefully.
