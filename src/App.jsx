@@ -2,11 +2,20 @@ import { useEffect, useRef, useState } from "react";
 import "./App.css";
 
 const DEFAULT_MESSAGES = [
-  {
-    role: "bot",
-    text: "👋 Welcome! You can describe your symptoms or upload a medical image/report for analysis.",
-  },
-];
+{
+role:"bot",
+text:`👋 Hi! I'm DoctorAI.
+
+I can help you:
+
+• Understand symptoms
+• Explain medical reports
+• Analyze skin images
+• Answer health questions
+
+Please note: I provide educational information only and do not replace professional medical advice.`
+}
+]
 
 function App() {
   const [messages, setMessages] = useState(DEFAULT_MESSAGES);
@@ -18,7 +27,6 @@ function App() {
   const [micSupported, setMicSupported] = useState(false);
   const [speechOutputSupported, setSpeechOutputSupported] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [chatHistory, setChatHistory] = useState([]);
   const [currentChatId, setCurrentChatId] = useState(Date.now());
 
@@ -52,42 +60,21 @@ function App() {
     }
   }, [voiceEnabled]);
 
-  useEffect(() => {
-  if (!isLoggedIn) {
-    localStorage.removeItem("doctorChats");
-    setChatHistory([]);
-    setMessages(DEFAULT_MESSAGES);
-    return;
-  }
 
-  try {
-    const savedChats = localStorage.getItem("doctorChats");
-    if (!savedChats) return;
+useEffect(() => {
+localStorage.setItem(
+"doctorChats",
+JSON.stringify(chatHistory)
+);
+}, [chatHistory]);
+useEffect(() => {
+const saved =
+localStorage.getItem("doctorChats");
 
-    const parsed = JSON.parse(savedChats);
-    if (Array.isArray(parsed)) {
-      setChatHistory(parsed);
-
-      if (parsed.length > 0) {
-        const latest = parsed[parsed.length - 1];
-        setCurrentChatId(latest.id || Date.now());
-        setMessages(
-          Array.isArray(latest.messages) && latest.messages.length > 0
-            ? latest.messages
-            : DEFAULT_MESSAGES
-        );
-      }
-    }
-  } catch (error) {
-    console.error("Failed to load chat history:", error);
-  }
-}, [isLoggedIn]);
-
- useEffect(() => {
-  if (!isLoggedIn) return;
-  localStorage.setItem("doctorChats", JSON.stringify(chatHistory));
-}, [chatHistory, isLoggedIn]);
-
+if(saved){
+setChatHistory(JSON.parse(saved));
+}
+}, []);
   useEffect(() => {
     if (!file) {
       setPreviewUrl(null);
@@ -329,7 +316,7 @@ function App() {
       <aside className="sidebar">
         <div className="sidebar-header">
           <h2>🩺 AI Doctor</h2>
-          <p>Chat history</p>
+          <p>Your recent conversations</p>
         </div>
 
         <button className="new-chat-btn" onClick={startNewChat}>
@@ -338,7 +325,7 @@ function App() {
 
         <div className="history-list">
           {sortedHistory.length === 0 ? (
-            <div className="history-empty">No chats yet</div>
+            <div className="history-empty">Start chatting to create history</div>
           ) : (
             sortedHistory.map((chat) => (
               <div
@@ -456,7 +443,7 @@ function App() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Ask anything..."
+                placeholder="Describe symptoms or upload a medical report..."
                 className="composer-input"
               />
 
