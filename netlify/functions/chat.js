@@ -253,17 +253,38 @@ Please contact emergency services or visit the nearest hospital immediately.`
         messages: [
   {
     role: "system",
-    content:
-      "You are DoctorAI, a friendly healthcare assistant. Remember previous messages in this conversation and answer in context.",
+    content: `
+You are DoctorAI.
+
+Remember previous messages.
+
+If user says:
+"tell me more"
+"explain"
+"why"
+"how"
+"details"
+
+continue explaining the LAST medical topic instead of asking for more information.
+
+Be conversational like ChatGPT.
+Keep answers simple.
+`
   },
 
-  ...history.slice(-10),
+  ...history.map(msg => ({
+    role:
+      msg.role === "bot"
+        ? "assistant"
+        : "user",
+    content: msg.text,
+  })),
 
   {
     role: "user",
     content: symptomPrompt(message),
   },
-],
+]
       });
 
       const intros = [

@@ -255,7 +255,7 @@ setChatHistory(JSON.parse(saved));
     try {
      const payload = {
   message: currentInput,
-  history: conversationHistory,
+  history: messages.slice(-10)
 };
       if (currentFile) {
         const fileDataUrl = await readFileAsDataUrl(currentFile);
