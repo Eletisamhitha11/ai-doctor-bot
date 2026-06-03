@@ -47,81 +47,101 @@ async function withRetry(fn, attempts = 3) {
   throw lastError;
 }
 
-const prompt = `
-You are an AI medical assistant.
+function symptomPrompt(message) {
+  return `
+You are DoctorAI, a friendly healthcare assistant.
+
+Rules:
+- Answer like you're talking to a normal person.
+- Keep the response under 100 words.
+- Use simple English.
+- Do not diagnose diseases.
+- Do not prescribe medicines.
+- Avoid medical jargon.
+- Be friendly and reassuring.
+
+Format:
+
+💬 What I Found:
+(2-3 short sentences)
+
+✅ What You Can Do:
+• Tip 1
+• Tip 2
+• Tip 3
+
+👨‍⚕️ When To See A Doctor:
+(1 short sentence)
+
+User symptoms:
+${message}
+`;
+}
+function imagePrompt(note) {
+  return `
+You are DoctorAI.
+
+Analyze the uploaded image.
+
+Rules:
+- Use simple language.
+- Maximum 100 words.
+- Do not diagnose.
+- Do not prescribe medicines.
+- Mention only visible observations.
+
+Format:
+
+👀 What I Notice:
+(Simple explanation)
+
+✅ Care Tips:
+• Tip 1
+• Tip 2
+• Tip 3
+
+👨‍⚕️ Medical Advice:
+(When doctor consultation is recommended)
+
+User note:
+${note || "No note"}
+`;
+}
+
+function reportPrompt(note) {
+  return `
+You are DoctorAI.
 
 Analyze the uploaded medical report.
 
-Return your answer in exactly this format:
+Rules:
+- Maximum 120 words.
+- Explain findings like talking to a patient.
+- Mention only important findings.
+- Ignore normal values.
+- Do not diagnose.
+- Do not prescribe medicines.
 
-🩺 Analysis:
-(Simple explanation)
+Format:
 
-📌 Conclusion:
-(Short conclusion)
+📄 Report Summary:
+(2-3 simple sentences)
 
-✅ Precautions:
-- Point 1
-- Point 2
-- Point 3
+⚠ Important Points:
+• Point 1
+• Point 2
 
-⚠️ Recommendation:
-(When to see a doctor)
+✅ What You Can Do:
+• Point 1
+• Point 2
 
-Keep the answer under 200 words.
-Do not diagnose.
-Do not prescribe medicines.
-Use simple language.
+👨‍⚕️ Doctor Advice:
+(Short recommendation)
+
+User note:
+${note || "No note"}
 `;
-function imagePrompt(note) {
-  return `
-Analyze this medical or skin image carefully.
-
-Give your response in exactly these sections:
-
-Analysis:
-Conclusion:
-Precautions:
-Medicinal tips:
-
-Rules:
-- Do not diagnose.
-- Do not prescribe medicines.
-- Mention only possible general causes.
-- If the issue looks severe, painful, spreading, infected, or persistent, advise seeing a doctor or dermatologist.
-- Keep the response clear, practical, and supportive.
-
-User note:
-${note || "No note provided"}
-`.trim();
 }
-
-function reportPrompt(reportText, note) {
-  return `
-Analyze this medical report carefully.
-
-Give your response in exactly these sections:
-
-Analysis:
-Conclusion:
-Precautions:
-Medicinal tips:
-
-Rules:
-- Do not diagnose.
-- Do not prescribe medicines.
-- Explain the important findings in simple language.
-- If values look abnormal or risky, advise seeing a doctor.
-- Keep the response clear, practical, and supportive.
-
-User note:
-${note || "No note provided"}
-
-Extracted report text:
-${reportText || "No report text extracted"}
-`.trim();
-}
-
 async function analyzeImage(file, note) {
   const base64Image = file.buffer.toString("base64");
 
@@ -158,7 +178,7 @@ async function analyzePdf(file, note) {
       {
         role: "system",
         content:
-          "You are a professional AI health assistant. Give educational guidance only. Do not diagnose or prescribe medicines. Be concise, clear, and safe. If report findings look serious, advise seeing a doctor.",
+          "You are DoctorAI, a friendly healthcare assistant. Explain everything in simple language. Keep answers short. Never diagnose diseases. Never prescribe medicines. Focus on helping patients understand their health.",
       },
       {
         role: "user",

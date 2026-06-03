@@ -34,29 +34,29 @@ function base64FromDataUrl(dataUrl = "") {
 
 function symptomPrompt(message) {
   return `
-You are DoctorAI, a friendly medical assistant.
+You are DoctorAI, a friendly healthcare assistant.
 
-IMPORTANT:
-- Give SHORT answers.
-- Use simple language that anyone can understand.
-- Maximum 120 words.
-- Do NOT diagnose.
-- Do NOT prescribe medicines.
-- Do NOT use difficult medical terms.
-- Be caring and reassuring.
+Rules:
+- Answer like you're talking to a normal person.
+- Keep the response under 100 words.
+- Use simple English.
+- Do not diagnose diseases.
+- Do not prescribe medicines.
+- Avoid medical jargon.
+- Be friendly and reassuring.
 
 Format:
 
-🩺 What it may mean:
-(2-3 lines)
+💬 What I Found:
+(2-3 short sentences)
 
-✅ What you can do:
-• point 1
-• point 2
-• point 3
+✅ What You Can Do:
+• Tip 1
+• Tip 2
+• Tip 3
 
-⚠️ See a doctor if:
-(1 short line)
+👨‍⚕️ When To See A Doctor:
+(1 short sentence)
 
 User symptoms:
 ${message}
@@ -70,23 +70,24 @@ You are DoctorAI.
 Analyze the uploaded image.
 
 Rules:
-- Maximum 120 words.
-- Explain in simple language.
+- Use simple language.
+- Maximum 100 words.
 - Do not diagnose.
 - Do not prescribe medicines.
+- Mention only visible observations.
 
 Format:
 
-👀 What I see:
-(2-3 lines)
+👀 What I Notice:
+(Simple explanation)
 
-✅ Care tips:
-• point 1
-• point 2
-• point 3
+✅ Care Tips:
+• Tip 1
+• Tip 2
+• Tip 3
 
-⚠️ See a dermatologist if:
-(1 short line)
+👨‍⚕️ Medical Advice:
+(When doctor consultation is recommended)
 
 User note:
 ${note || "No note"}
@@ -100,24 +101,28 @@ You are DoctorAI.
 Analyze the uploaded medical report.
 
 Rules:
-- Maximum 150 words.
-- Use very simple language.
+- Maximum 120 words.
 - Explain findings like talking to a patient.
+- Mention only important findings.
+- Ignore normal values.
 - Do not diagnose.
 - Do not prescribe medicines.
 
 Format:
 
 📄 Report Summary:
-(2-3 lines)
+(2-3 simple sentences)
 
-✅ Key Points:
-• point 1
-• point 2
-• point 3
+⚠ Important Points:
+• Point 1
+• Point 2
 
-⚠️ Follow-up:
-(1 short line)
+✅ What You Can Do:
+• Point 1
+• Point 2
+
+👨‍⚕️ Doctor Advice:
+(Short recommendation)
 
 User note:
 ${note || "No note"}
@@ -207,32 +212,77 @@ export async function handler(event) {
   try {
     const body = event.body ? JSON.parse(event.body) : {};
 
-    const {
-      message = "",
-      fileName = "",
-      fileType = "",
-      fileDataUrl = "",
-    } = body;
+   const {
+  message = "",
+  history = [],
+  fileName = "",
+  fileType = "",
+  fileDataUrl = "",
+} = body;
+    const emergencyWords = [
+  "chest pain",
+  "difficulty breathing",
+  "heart attack",
+  "stroke",
+  "seizure",
+  "unconscious",
+  "severe bleeding"
+];
 
+const emergency = emergencyWords.some(word =>
+  message.toLowerCase().includes(word)
+);
+
+if (emergency) {
+  return {
+    statusCode: 200,
+    headers,
+    body: JSON.stringify({
+      reply: `🚨 Emergency Warning
+
+These symptoms may need urgent medical attention.
+
+Please contact emergency services or visit the nearest hospital immediately.`
+    }),
+  };
+}
     // No file: symptom chat
     if (!fileDataUrl) {
       const completion = await groq.chat.completions.create({
         model: "llama-3.3-70b-versatile",
         messages: [
-          {
-            role: "system",
-            content:
-              "You are a professional AI health assistant. Give educational guidance only. Do not diagnose or prescribe medicines. Be concise, clear, and safe. If symptoms are serious, advise seeing a doctor.",
-          },
-          {
-            role: "user",
-            content: symptomPrompt(message),
-          },
-        ],
+  {
+    role: "system",
+    content:
+      "You are DoctorAI, a friendly healthcare assistant. Remember previous messages in this conversation and answer in context.",
+  },
+
+  ...history.slice(-10),
+
+  {
+    role: "user",
+    content: symptomPrompt(message),
+  },
+],
       });
 
-      const reply =
-        completion.choices[0]?.message?.content || "No response received.";
+      const intros = [
+  "😊 I'm happy to help.",
+  "💙 Let's look at this together.",
+  "🩺 Here's a simple explanation.",
+  "😊 I reviewed the information."
+];
+
+const intro =
+intros[Math.floor(Math.random() * intros.length)];
+
+const reply =
+intro +
+"\n\n" +
+(
+completion.choices[0]?.message?.content ||
+"No response received."
+);
 
       return {
         statusCode: 200,

@@ -29,7 +29,7 @@ function App() {
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [chatHistory, setChatHistory] = useState([]);
   const [currentChatId, setCurrentChatId] = useState(Date.now());
-
+  const [conversationHistory, setConversationHistory] = useState([]);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const recognitionRef = useRef(null);
@@ -253,10 +253,10 @@ setChatHistory(JSON.parse(saved));
     setMessages(optimisticMessages);
 
     try {
-      const payload = {
-        message: currentInput,
-      };
-
+     const payload = {
+  message: currentInput,
+  history: conversationHistory,
+};
       if (currentFile) {
         const fileDataUrl = await readFileAsDataUrl(currentFile);
         payload.fileName = currentFile.name;
@@ -281,6 +281,17 @@ setChatHistory(JSON.parse(saved));
       ];
 
       setMessages(updatedMessages);
+      setConversationHistory((prev) => [
+  ...prev,
+  {
+    role: "user",
+    content: currentInput,
+  },
+  {
+    role: "assistant",
+    content: botReply,
+  },
+]);
       speakText(botReply);
 
       setChatHistory((prev) => [
