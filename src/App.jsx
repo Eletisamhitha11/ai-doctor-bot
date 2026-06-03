@@ -287,7 +287,10 @@ setChatHistory(JSON.parse(saved));
         ...prev.filter((chat) => chat.id !== currentChatId),
         {
           id: currentChatId,
-          title: userText.substring(0, 30) || "New Chat",
+          title:
+  currentInput?.trim()
+    ? currentInput.substring(0, 40)
+    : currentFile?.name?.replace(/\.[^/.]+$/, "") || "New Chat",
           messages: updatedMessages,
         },
       ]);
