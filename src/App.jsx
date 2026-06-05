@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { jsPDF } from "jspdf";
 import "./App.css";
 
 const DEFAULT_MESSAGES = [
@@ -33,7 +34,7 @@ function App() {
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const recognitionRef = useRef(null);
-
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const readFileAsDataUrl = (selectedFile) =>
     new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -324,7 +325,36 @@ setChatHistory(JSON.parse(saved));
   };
 
   const sortedHistory = [...chatHistory].sort((a, b) => b.id - a.id);
+  const downloadReport = () => {
+  const doc = new jsPDF();
 
+  doc.setFontSize(18);
+  doc.text("AI Doctor Consultation Report", 20, 20);
+
+  doc.setFontSize(12);
+
+  let y = 40;
+
+  messages.forEach((msg) => {
+    const role = msg.role === "user" ? "Patient" : "Doctor Bot";
+
+    const lines = doc.splitTextToSize(
+      `${role}: ${msg.text}`,
+      170
+    );
+
+    doc.text(lines, 20, y);
+
+    y += lines.length * 7 + 5;
+
+    if (y > 270) {
+      doc.addPage();
+      y = 20;
+    }
+  });
+
+  doc.save("doctor-report.pdf");
+};
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -332,7 +362,7 @@ setChatHistory(JSON.parse(saved));
           <h2>🩺 AI Doctor</h2>
           <p>Your recent conversations</p>
         </div>
-
+        
         <button className="new-chat-btn" onClick={startNewChat}>
           ➕ New Chat
         </button>
@@ -383,6 +413,14 @@ setChatHistory(JSON.parse(saved));
                     msg.role === "user" ? "user" : "bot"
                   }`}
                 >
+                  {msg.role === "bot" && (
+  <button
+    className="speak-btn"
+    onClick={() => speakText(msg.text)}
+  >
+    🔊
+  </button>
+)}
                   <div className={`message-bubble ${msg.role}`}>
                     <div className="message-text">{msg.text}</div>
                   </div>
@@ -473,7 +511,7 @@ setChatHistory(JSON.parse(saved));
               >
                 {isListening ? "●" : "🎤"}
               </button>
-
+              
               <button
                 type="button"
                 className={`icon-btn voice-toggle-btn ${
@@ -496,7 +534,7 @@ setChatHistory(JSON.parse(saved));
               >
                 {voiceEnabled ? "🔊" : "🔇"}
               </button>
-
+              
               <button
                 type="button"
                 onClick={handleSend}

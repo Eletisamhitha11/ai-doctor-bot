@@ -161,7 +161,20 @@ async function callGemini({ prompt, fileType, fileDataUrl }) {
     }
   );
 
-  const data = await response.json();
+const responseText = await response.text();
+
+console.log("Gemini Status:", response.status);
+console.log("Gemini Response:", responseText);
+
+let data;
+
+try {
+  data = JSON.parse(responseText);
+} catch (err) {
+  throw new Error(
+    `Gemini returned invalid response: ${responseText.substring(0, 200)}`
+  );
+}
 
   if (!response.ok) {
     throw new Error(data?.error?.message || "Gemini request failed");
@@ -193,6 +206,8 @@ async function analyzePdf(fileType, fileDataUrl, note) {
 }
 
 export async function handler(event) {
+  console.log("GROQ:", !!process.env.GROQ_API_KEY);
+  console.log("GEMINI:", !!process.env.GEMINI_API_KEY);
   if (event.httpMethod === "OPTIONS") {
     return {
       statusCode: 204,
@@ -324,6 +339,9 @@ completion.choices[0]?.message?.content ||
 
     // PDF upload
     if (fileType === "application/pdf") {
+      console.log("File Type:", fileType);
+console.log("File Name:", fileName);
+console.log("Data Length:", fileDataUrl?.length);
       const reply = await analyzePdf(fileType, fileDataUrl, message);
       return {
         statusCode: 200,
@@ -339,15 +357,15 @@ completion.choices[0]?.message?.content ||
         reply: `Unsupported file type${fileName ? `: ${fileName}` : ""}. Please upload an image or PDF.`,
       }),
     };
-  } catch (error) {
-    console.error("Netlify Function error:", error);
+  }catch (error) {
+  console.error("Netlify Function error:", error);
 
-    return {
-      statusCode: 500,
-      headers,
-      body: JSON.stringify({
-        reply: "Server error. Please try again.",
-      }),
-    };
-  }
+  return {
+    statusCode: 500,
+    headers,
+    body: JSON.stringify({
+      reply: `❌ Error: ${error.message}`,
+    }),
+  };
+}
 }

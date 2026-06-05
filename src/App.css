@@ -560,3 +560,15 @@ body {
     height: 48px;
   }
 }
+.speak-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  margin-top: 8px;
+  color: white;
+}
+
+.speak-btn:hover {
+  transform: scale(1.1);
+}
