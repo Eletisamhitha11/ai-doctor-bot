@@ -1,332 +1,200 @@
+// ── Local dev server — mirrors netlify/functions/chat.js & recommend-doctor.js
+// Run: node server.js   (in one terminal)
+// Run: npm run dev      (in another terminal)
+// This is ONLY for local development. Netlify handles functions in production.
+
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
+import { readFileSync } from "fs";
+
+// Load .env manually (no dotenv package needed in newer Node)
+try {
+  const env = readFileSync(".env", "utf8");
+  env.split("\n").forEach((line) => {
+    const [key, ...rest] = line.split("=");
+    if (key && rest.length) process.env[key.trim()] = rest.join("=").trim();
+  });
+} catch {}
+
 import Groq from "groq-sdk";
-import multer from "multer";
-import { GoogleGenAI } from "@google/genai";
-import { createRequire } from "module";
-import crypto from "crypto";
 
-dotenv.config();
-
-const require = createRequire(import.meta.url);
-
-const app = express();
-const upload = multer({ storage: multer.memoryStorage() });
+const groq  = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const app   = express();
 
 app.use(cors());
-app.use(express.json({ limit: "20mb" }));
+app.use(express.json({ limit: "20mb" })); // allow large base64 payloads
 
-if (!process.env.GROQ_API_KEY) throw new Error("Missing GROQ_API_KEY in .env");
-if (!process.env.GEMINI_API_KEY) throw new Error("Missing GEMINI_API_KEY in .env");
-
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
-// ─── In-memory user store (replace with DB in production) ───────────────────
-const users = new Map();
-const sessions = new Map();
-
-function hashPassword(password) {
-  return crypto.createHash("sha256").update(password + "doctorbot_salt").digest("hex");
-}
-
-function generateToken() {
-  return crypto.randomBytes(32).toString("hex");
-}
-
-// ─── Auth Middleware ─────────────────────────────────────────────────────────
-function requireAuth(req, res, next) {
-  const token = req.headers.authorization?.split(" ")[1];
-  if (!token || !sessions.has(token)) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-  req.user = sessions.get(token);
-  next();
-}
-
-// ─── Auth Routes ─────────────────────────────────────────────────────────────
-app.post("/auth/signup", (req, res) => {
-  const { name, email, password, age, gender } = req.body;
-  if (!name || !email || !password) {
-    return res.status(400).json({ error: "Name, email and password are required" });
-  }
-  if (users.has(email)) {
-    return res.status(409).json({ error: "Email already registered" });
-  }
-  const user = {
-    id: crypto.randomUUID(),
-    name,
-    email,
-    password: hashPassword(password),
-    age: age || null,
-    gender: gender || null,
-    createdAt: new Date().toISOString(),
-    chatHistory: [],
-  };
-  users.set(email, user);
-  const token = generateToken();
-  sessions.set(token, { id: user.id, email, name });
-  res.json({ token, user: { id: user.id, name, email, age, gender } });
-});
-
-app.post("/auth/login", (req, res) => {
-  const { email, password } = req.body;
-  const user = users.get(email);
-  if (!user || user.password !== hashPassword(password)) {
-    return res.status(401).json({ error: "Invalid credentials" });
-  }
-  const token = generateToken();
-  sessions.set(token, { id: user.id, email, name: user.name });
-  res.json({ token, user: { id: user.id, name: user.name, email, age: user.age, gender: user.gender } });
-});
-
-app.post("/auth/logout", requireAuth, (req, res) => {
-  const token = req.headers.authorization?.split(" ")[1];
-  sessions.delete(token);
-  res.json({ success: true });
-});
-
-app.get("/auth/me", requireAuth, (req, res) => {
-  const user = users.get(req.user.email);
-  res.json({ id: user.id, name: user.name, email: user.email, age: user.age, gender: user.gender });
-});
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
 async function withRetry(fn, attempts = 3) {
-  let lastError;
+  let last;
   for (let i = 0; i < attempts; i++) {
-    try { return await fn(); } catch (e) { lastError = e; await sleep(1000 * (i + 1)); }
+    try { return await fn(); } catch (e) { last = e; await sleep(1200 * (i + 1)); }
   }
-  throw lastError;
+  throw last;
 }
 
-// ─── Prompts ─────────────────────────────────────────────────────────────────
-function symptomPrompt(message, lang = "English") {
-  return `
-You are DoctorAI, a friendly healthcare assistant. Always respond in ${lang}.
+// ── Gemini via REST — tries 2.5-flash then 1.5-flash as fallback ─────────────
+async function callGemini({ prompt, fileType, fileDataUrl }) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || !apiKey.startsWith("AIza")) {
+    throw new Error(
+      "Invalid or missing GEMINI_API_KEY. " +
+      "Get a free key at https://aistudio.google.com/apikey — it must start with 'AIza'."
+    );
+  }
 
-Rules:
-- Answer like you're talking to a normal person.
-- Keep the response under 120 words.
-- Use simple language (in ${lang}).
-- Do not diagnose diseases.
-- Do not prescribe medicines.
-- Be friendly and reassuring.
+  const parts = [];
+  if (fileDataUrl) {
+    const base64 = fileDataUrl.includes(",") ? fileDataUrl.split(",")[1] : fileDataUrl;
+    parts.push({ inline_data: { mime_type: fileType, data: base64 } });
+  }
+  parts.push({ text: prompt });
 
-Format:
+  // Try gemini-2.5-flash first, fall back to gemini-1.5-flash
+  const models = ["gemini-2.5-flash", "gemini-1.5-flash"];
+  let lastErr;
+
+  for (const model of models) {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ role: "user", parts }] }),
+      }
+    );
+
+    const raw = await res.text();
+    let data;
+    try { data = JSON.parse(raw); } catch { lastErr = new Error(`Gemini invalid JSON: ${raw.slice(0, 200)}`); continue; }
+
+    if (!res.ok) {
+      lastErr = new Error(data?.error?.message || `Gemini ${model} error ${res.status}`);
+      console.warn(`[Gemini] ${model} failed:`, lastErr.message);
+      continue;
+    }
+
+    const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || "").join("").trim();
+    if (text) return text;
+    lastErr = new Error("Gemini returned empty response");
+  }
+
+  throw lastErr;
+}
+
+// ── Prompts ───────────────────────────────────────────────────────────────────
+const symptomPrompt = (msg, lang, history = []) => {
+  const ctx = history.slice(-4).map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`).join("\n");
+  return `You are DoctorBot AI. Always respond in ${lang}. Simple language, under 120 words. No diagnosis. No prescriptions. Be friendly.
+${ctx ? ctx + "\n\n" : ""}Format:
 💬 What I Found:
-(2-3 short sentences)
-
+(2-3 sentences)
 ✅ What You Can Do:
-• Tip 1
-• Tip 2
-• Tip 3
+• Tip 1  • Tip 2  • Tip 3
+👨‍⚕️ When To See A Doctor: (1 sentence)
+User symptoms: ${msg}`;
+};
 
-👨‍⚕️ When To See A Doctor:
-(1 short sentence)
-
-User symptoms: ${message}
-`;
-}
-
-function imagePrompt(note, lang = "English") {
-  return `
-You are DoctorAI. Analyze the uploaded image. Respond in ${lang}.
-
-Rules:
-- Simple language. Maximum 100 words. Do not diagnose. Do not prescribe.
-
+const medicinePrompt = (query, lang) =>
+  `You are DoctorBot AI, a medical info assistant. Respond in ${lang}. Under 150 words. Never advise stopping prescribed medicine.
 Format:
-👀 What I Notice:
-(Simple explanation)
+💊 About This Medicine: (2 sentences)
+📋 Common Uses: • Use 1  • Use 2  • Use 3
+⚠️ Side Effects: • Effect 1  • Effect 2
+🚫 Warnings: • Warning 1  • Warning 2
+👨‍⚕️ Always consult your doctor before changing medication.
+Query: ${query}`;
 
-✅ Care Tips:
-• Tip 1
-• Tip 2
-• Tip 3
-
-👨‍⚕️ Medical Advice:
-(When doctor consultation is recommended)
-
-User note: ${note || "No note"}
-`;
-}
-
-function reportPrompt(reportText, note, lang = "English") {
-  return `
-You are DoctorAI. Analyze this medical report. Respond in ${lang}.
-
-Rules:
-- Maximum 150 words. Explain findings simply. Mention only important findings. Do not diagnose. Do not prescribe.
-
+const imagePrompt  = (note, lang) =>
+  `You are DoctorBot AI. Analyze this medical image. Respond in ${lang}. Max 100 words. No diagnosis.
 Format:
-📄 Report Summary:
-(2-3 simple sentences)
+👀 What I Notice: (explanation)
+✅ Care Tips: • Tip 1  • Tip 2
+👨‍⚕️ Medical Advice: (when to see doctor)
+Note: ${note || "none"}`;
 
-⚠ Important Points:
-• Point 1
-• Point 2
+const reportPrompt = (note, lang) =>
+  `You are DoctorBot AI. Analyze this medical report. Respond in ${lang}. Max 150 words. No diagnosis.
+Format:
+📄 Report Summary: (2-3 sentences)
+⚠ Important Points: • Point 1  • Point 2
+✅ What You Can Do: • Point 1  • Point 2
+👨‍⚕️ Doctor Advice: (short)
+Note: ${note || "none"}`;
 
-✅ What You Can Do:
-• Point 1
-• Point 2
-
-👨‍⚕️ Doctor Advice:
-(Short recommendation)
-
-Report content: ${reportText}
-User note: ${note || "No note"}
-`;
-}
-
-function doctorRecommendationPrompt(symptoms, location, lang = "English") {
-  return `
-You are DoctorAI. Based on the symptoms provided, recommend what type of medical specialist the user should see. Respond in ${lang}.
-
-Return ONLY valid JSON (no markdown, no backticks) in this exact format:
-{
-  "primarySpecialist": "Specialist Name",
-  "reason": "Short reason why (1 sentence)",
-  "urgency": "low|medium|high",
-  "urgencyLabel": "Schedule within X days/weeks",
-  "alternativeSpecialists": ["Specialist 2", "Specialist 3"],
-  "whatToExpect": "Brief description of what the appointment will involve",
-  "questionsToAsk": ["Question 1", "Question 2", "Question 3"],
-  "redFlags": ["Warning sign 1", "Warning sign 2"]
-}
-
+const doctorPrompt = (symptoms, location, lang) =>
+  `Medical triage assistant. Recommend specialist. Respond in ${lang}.
+Return ONLY valid JSON (no markdown):
+{"primarySpecialist":"","reason":"","urgency":"low|medium|high","urgencyLabel":"","alternativeSpecialists":[],"whatToExpect":"","questionsToAsk":[],"redFlags":[]}
 Symptoms: ${symptoms}
-Location context: ${location || "Not provided"}
-`;
-}
+Location: ${location || "Not provided"}`;
 
-// ─── Image Analysis ──────────────────────────────────────────────────────────
-async function analyzeImage(file, note, lang) {
-  const base64Image = file.buffer.toString("base64");
-  const result = await withRetry(() =>
-    gemini.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: [
-  {
-    role: "user",
-    contents: [
-  {
-    role: "user",
-    parts: [
-      {
-        inlineData: {
-          mimeType: file.mimetype,
-          data: base64Image,
-        },
-      },
-      {
-        text: imagePrompt(note, lang),
-      },
-    ],
-  },
-],
-  },
-],
-    })
-  );
-  return result.text || "No response received.";
-}
-
-// ─── PDF Analysis ─────────────────────────────────────────────────────────────
-async function analyzePdf(file, note, lang) {
-  let reportText = "";
+// ── /chat ─────────────────────────────────────────────────────────────────────
+app.post("/.netlify/functions/chat", async (req, res) => {
   try {
-    const pdfParse = require("pdf-parse");
-    const data = await pdfParse(file.buffer);
-    reportText = data.text || "";
-  } catch (e) {
-    reportText = "Could not extract text from PDF.";
-  }
+    const { message = "", history = [], mode = "symptom", language = "English", fileType = "", fileDataUrl = "", fileName = "" } = req.body;
 
-  const completion = await groq.chat.completions.create({
-    model: "llama-3.3-70b-versatile",
-    messages: [
-      { role: "system", content: "You are DoctorAI, a friendly healthcare assistant." },
-      { role: "user", content: reportPrompt(reportText, note, lang) },
-    ],
-  });
-  return completion.choices[0]?.message?.content || "No response received.";
-}
+    console.log(`[chat] mode=${mode} | lang=${language} | file=${fileName || "none"}`);
 
-// ─── Chat Endpoint ────────────────────────────────────────────────────────────
-app.post("/chat", upload.single("file"), async (req, res) => {
-  try {
-    const message = req.body.message || "";
-    const lang = req.body.language || "English";
-    const hasFile = !!req.file;
+    const emergency = ["chest pain","heart attack","stroke","seizure","can't breathe","difficulty breathing","unconscious","severe bleeding"];
+    if (emergency.some((w) => message.toLowerCase().includes(w))) {
+      return res.json({ reply: "🚨 Emergency Warning\n\nPlease call emergency services (112 / 911) or go to the nearest hospital immediately." });
+    }
 
-    if (!hasFile) {
-      const completion = await groq.chat.completions.create({
+    if (!fileDataUrl) {
+      const prompt = mode === "medicine" ? medicinePrompt(message, language) : symptomPrompt(message, language, history);
+      const completion = await withRetry(() => groq.chat.completions.create({
         model: "llama-3.3-70b-versatile",
         messages: [
-          { role: "system", content: `You are DoctorAI, a friendly healthcare assistant. Always respond in ${lang}. Give educational guidance only. Do not diagnose or prescribe.` },
-          { role: "user", content: symptomPrompt(message, lang) },
+          { role: "system", content: `You are DoctorBot AI. Respond in ${language}. Never diagnose or prescribe.` },
+          ...history.slice(-4).map((m) => ({ role: m.role === "user" ? "user" : "assistant", content: m.content })),
+          { role: "user", content: prompt },
         ],
-      });
+      }));
       return res.json({ reply: completion.choices[0]?.message?.content || "No response." });
     }
 
-    if (req.file.mimetype.startsWith("image/")) {
-      return res.json({ reply: await analyzeImage(req.file, message, lang) });
+    if (fileType.startsWith("image/")) {
+      return res.json({ reply: await withRetry(() => callGemini({ prompt: imagePrompt(message, language), fileType, fileDataUrl })) });
     }
 
-    if (req.file.mimetype === "application/pdf") {
-      return res.json({ reply: await analyzePdf(req.file, message, lang) });
+    if (fileType === "application/pdf") {
+      return res.json({ reply: await withRetry(() => callGemini({ prompt: reportPrompt(message, language), fileType, fileDataUrl })) });
     }
 
-    return res.status(400).json({ reply: "Please upload an image or PDF report." });
-  } catch (error) {
-    console.error("Chat error:", error?.message);
-    return res.status(500).json({ reply: "Server error. Please try again." });
+    res.status(400).json({ reply: `Unsupported file type: ${fileName || fileType}` });
+  } catch (err) {
+    console.error("[chat error]", err.message);
+    res.status(500).json({ reply: `❌ Error: ${err.message}` });
   }
 });
 
-// ─── Doctor Recommendation Endpoint ──────────────────────────────────────────
-app.post("/recommend-doctor", async (req, res) => {
+// ── /recommend-doctor ─────────────────────────────────────────────────────────
+app.post("/.netlify/functions/recommend-doctor", async (req, res) => {
   try {
-    const { symptoms, location, language } = req.body;
-    const lang = language || "English";
+    const { symptoms, location, language = "English" } = req.body;
+    if (!symptoms?.trim()) return res.status(400).json({ error: "Symptoms required" });
 
     const completion = await groq.chat.completions.create({
       model: "llama-3.3-70b-versatile",
       messages: [
-        { role: "system", content: "You are a medical triage assistant. Return only valid JSON, no markdown." },
-        { role: "user", content: doctorRecommendationPrompt(symptoms, location, lang) },
+        { role: "system", content: "Return only valid JSON. No markdown." },
+        { role: "user",   content: doctorPrompt(symptoms, location, language) },
       ],
     });
 
-    const raw = completion.choices[0]?.message?.content || "{}";
+    const raw   = completion.choices[0]?.message?.content || "{}";
     const clean = raw.replace(/```json|```/g, "").trim();
-    const recommendation = JSON.parse(clean);
-    res.json(recommendation);
-  } catch (error) {
-    console.error("Doctor rec error:", error?.message);
-    res.status(500).json({ error: "Could not generate recommendation." });
+    res.json(JSON.parse(clean));
+  } catch (err) {
+    console.error("[doctor error]", err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
-// ─── Save Chat History ────────────────────────────────────────────────────────
-app.post("/save-chat", requireAuth, (req, res) => {
-  const { messages } = req.body;
-  const user = users.get(req.user.email);
-  if (user) {
-    user.chatHistory = messages;
-    users.set(req.user.email, user);
-  }
-  res.json({ success: true });
+const PORT = 8888;
+app.listen(PORT, () => {
+  console.log(`\n✅ DoctorBot local dev server running`);
+  console.log(`   Functions : http://localhost:${PORT}/.netlify/functions/chat`);
+  console.log(`   Now run   : npm run dev   (in another terminal)\n`);
 });
-
-app.get("/chat-history", requireAuth, (req, res) => {
-  const user = users.get(req.user.email);
-  res.json({ history: user?.chatHistory || [] });
-});
-
-app.listen(5000, () => console.log("✅ DoctorBot server running on port 5000"));

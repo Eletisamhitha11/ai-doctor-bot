@@ -15,13 +15,35 @@ const TABS = [
   { key: "history",  icon: "📜", label: "History"         },
 ];
 
-// Convert File → base64 data URL
+// Convert File → base64 data URL, compressing images to stay under Netlify 6MB limit
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload  = () => resolve(reader.result); // includes "data:mime;base64,..." prefix
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
+    // For images: resize/compress via canvas before encoding
+    if (file.type.startsWith("image/")) {
+      const img = new Image();
+      const objectUrl = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(objectUrl);
+        const MAX = 1024; // max dimension px
+        let { width, height } = img;
+        if (width > MAX || height > MAX) {
+          if (width > height) { height = Math.round(height * MAX / width); width = MAX; }
+          else                { width  = Math.round(width  * MAX / height); height = MAX; }
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width; canvas.height = height;
+        canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", 0.82)); // compressed JPEG
+      };
+      img.onerror = reject;
+      img.src = objectUrl;
+    } else {
+      // PDF: read as-is
+      const reader = new FileReader();
+      reader.onload  = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    }
   });
 }
 
@@ -115,13 +137,22 @@ export default function ChatPage() {
         fileName,
       };
 
-      const r    = await fetch(CHAT_URL, {
+      const r = await fetch(CHAT_URL, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify(payload),
       });
-      const data = await r.json();
-      const aiMsg   = { role: "assistant", content: data.reply };
+
+      // Guard against empty / non-JSON responses
+      const text = await r.text();
+      if (!text || text.trim() === "") {
+        throw new Error("Server returned empty response. Check Netlify function logs.");
+      }
+      let data;
+      try { data = JSON.parse(text); }
+      catch { throw new Error(`Invalid server response: ${text.slice(0, 120)}`); }
+
+      const aiMsg   = { role: "assistant", content: data.reply || "No response." };
       const updated = [...newMsgs, aiMsg];
       setMessages(updated);
       speak(data.reply, langCode);

@@ -1,6 +1,6 @@
 import { AuthProvider, useAuth } from "./context/Authcontext";
-import AuthPage from "./pages/Authpage";
-import ChatPage from "./pages/Chatpage";
+import AuthPage from "./pages/AuthPage";
+import ChatPage from "./pages/ChatPage";
 
 function AppRouter() {
   const { user, loading } = useAuth();
